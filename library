@@ -5,6 +5,22 @@
 	Элементы: Toggle (+ColorPicker, +Settings), Slider, Dropdown (Multi), Keybind,
 	Textbox, Button, Label, Divider, ColorPicker. Callback есть у каждого.
 	Также: Notify, Serialize/Deserialize, SaveConfig/LoadConfig, Unload.
+
+	ИСПРАВЛЕНИЯ (относительно прошлой версии):
+	  * Клики по попапам (Settings / Dropdown / ColorPicker) считались через GetGuiInset(),
+	    который не всегда совпадает со смещением ввода -> клик по верхним рядам попапа
+	    считался "мимо" и закрывал Settings. Теперь позиция мыши берётся через
+	    UserInputService:GetMouseLocation() (те же координаты, что и AbsolutePosition
+	    у ScreenGui с IgnoreGuiInset = true).
+	  * Попапы теперь Active (клик по пустому месту попапа больше не "проваливается"
+	    на элементы под ним), у каждого попапа свой ZIndex по глубине вложенности,
+	    они следуют за владельцем и закрываются, если владелец скрыт / уехал за экран
+	    прокрутки.
+	  * Dropdown: список не вылезает за край, пустой список, сохранение выбора при
+	    SetValues, стрелка v/^, галочка у выбранного, Escape закрывает.
+	  * Меню: колонки не вылезают за правый край (UIPadding внутри ScrollingFrame
+	    заменён на отдельный Frame), скруглённые углы футера, Window:Center(),
+	    окно нельзя утащить за экран.
 ]]
 
 local Players = game:GetService("Players")
@@ -12,6 +28,7 @@ local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local GuiService = game:GetService("GuiService")
+local RunService = game:GetService("RunService")
 
 local Library = {
 	Toggles = {},
@@ -42,6 +59,7 @@ local T = Library.Theme
 local FOOTER = 24
 local SIDEBAR = 150
 local TOPBAR = 42
+local WINDOW_RADIUS = 10
 
 ----------------------------------------------------------------------
 -- Утилиты
@@ -119,14 +137,22 @@ local function Connect(signal, fn)
 	return c
 end
 
--- ScreenGui создаётся с IgnoreGuiInset=true, поэтому координаты ввода приводим к экранным
-local function ToScreen(v3)
-	return Vector2.new(v3.X, v3.Y) + GuiService:GetGuiInset()
+-- Позиция указателя в тех же координатах, что и AbsolutePosition у нашего ScreenGui
+-- (IgnoreGuiInset = true). Для мыши это ровно GetMouseLocation(): никаких догадок про inset.
+local function PointerPos(input)
+	if input and input.UserInputType == Enum.UserInputType.Touch then
+		return Vector2.new(input.Position.X, input.Position.Y) + GuiService:GetGuiInset()
+	end
+	return UIS:GetMouseLocation()
 end
 
-local function Inside(gui, p)
+local function Inside(gui, p, pad)
+	pad = pad or 0
 	local pos, size = gui.AbsolutePosition, gui.AbsoluteSize
-	return p.X >= pos.X and p.X <= pos.X + size.X and p.Y >= pos.Y and p.Y <= pos.Y + size.Y
+	return p.X >= pos.X - pad
+		and p.X <= pos.X + size.X + pad
+		and p.Y >= pos.Y - pad
+		and p.Y <= pos.Y + size.Y + pad
 end
 
 local function IsPress(input)
@@ -155,7 +181,7 @@ local function GetGuiParent()
 	return Players.LocalPlayer:WaitForChild("PlayerGui")
 end
 
--- Общий drag: один активный обработчик на всю библиотеку
+-- Общий drag: один активный обработчик на всю библиотеку. fn получает InputObject.
 local activeDrag
 local function BeginDrag(fn)
 	activeDrag = fn
@@ -193,8 +219,48 @@ local function Register(id, obj)
 end
 
 ----------------------------------------------------------------------
--- Инициализация общего GUI, попапы, уведомления
+-- Попапы: Settings / Dropdown / ColorPicker
+-- Стек открытых попапов. Каждый следующий открывается поверх предыдущего.
+-- Клик ВНУТРИ попапа или по его владельцу ничего не закрывает.
+-- Клик мимо закрывает верхние попапы, пока не дойдёт до того, внутри которого клик.
 ----------------------------------------------------------------------
+
+-- Владелец реально виден? (не скрыт и не уехал за границы прокрутки / окна)
+local function OwnerVisible(owner)
+	if not owner:IsDescendantOf(Library.Gui) then
+		return false
+	end
+	local c = owner.AbsolutePosition + owner.AbsoluteSize / 2
+	local inst = owner
+	while inst and inst ~= Library.Gui do
+		if inst:IsA("GuiObject") then
+			if not inst.Visible then
+				return false
+			end
+			if inst ~= owner and (inst.ClipsDescendants or inst:IsA("ScrollingFrame")) then
+				if not Inside(inst, c) then
+					return false
+				end
+			end
+		end
+		inst = inst.Parent
+	end
+	return true
+end
+
+-- Ставит попап под владельца; если снизу нет места - над ним; по горизонтали не выходит за экран
+local function Place(entry)
+	local frame, owner = entry.frame, entry.owner
+	local vp = Library.Overlay.AbsoluteSize
+	local s = frame.AbsoluteSize
+	local op, os = owner.AbsolutePosition, owner.AbsoluteSize
+	local x = math.clamp(op.X, 4, math.max(4, vp.X - s.X - 4))
+	local y = op.Y + os.Y + 4
+	if y + s.Y > vp.Y - 4 then
+		y = math.max(4, op.Y - s.Y - 4)
+	end
+	frame.Position = UDim2.fromOffset(x, y)
+end
 
 function Library:_init()
 	if self.Gui then
@@ -242,7 +308,7 @@ function Library:_init()
 				or input.UserInputType == Enum.UserInputType.Touch
 			)
 		then
-			activeDrag(input.Position)
+			activeDrag(input)
 		end
 	end)
 
@@ -252,15 +318,22 @@ function Library:_init()
 		end
 	end)
 
-	-- клик мимо попапа закрывает его
+	-- клик мимо попапа закрывает его; Escape закрывает верхний
 	Connect(UIS.InputBegan, function(input)
+		if #Library._popups == 0 then
+			return
+		end
+		if input.KeyCode == Enum.KeyCode.Escape then
+			Library:_closeTop()
+			return
+		end
 		if not IsPress(input) then
 			return
 		end
-		local p = ToScreen(input.Position)
+		local p = PointerPos(input)
 		while #Library._popups > 0 do
 			local top = Library._popups[#Library._popups]
-			if Inside(top.frame, p) or Inside(top.owner, p) then
+			if Inside(top.frame, p, 2) or Inside(top.owner, p, 2) then
 				break
 			end
 			Library:_closeTop()
@@ -292,6 +365,9 @@ function Library:_isOpen(frame)
 end
 
 function Library:_closeFrame(frame)
+	if not self:_isOpen(frame) then
+		return
+	end
 	while #self._popups > 0 do
 		local top = self._popups[#self._popups]
 		self:_closeTop()
@@ -299,6 +375,34 @@ function Library:_closeFrame(frame)
 			break
 		end
 	end
+end
+
+-- Пока открыт хоть один попап: следим за владельцами (прокрутка, перетаскивание, скрытие)
+function Library:_ensureFollow()
+	if self._follow then
+		return
+	end
+	self._follow = RunService.RenderStepped:Connect(function()
+		if #self._popups == 0 then
+			if self._follow then
+				self._follow:Disconnect()
+				self._follow = nil
+			end
+			return
+		end
+		for i, p in ipairs(self._popups) do
+			if not OwnerVisible(p.owner) then
+				-- закрываем этот попап и всё, что открыто поверх него
+				while #self._popups >= i do
+					self:_closeTop()
+				end
+				break
+			end
+		end
+		for _, p in ipairs(self._popups) do
+			Place(p)
+		end
+	end)
 end
 
 function Library:_openPopup(frame, owner, onClose)
@@ -312,25 +416,12 @@ function Library:_openPopup(frame, owner, onClose)
 		end
 		self:_closeTop()
 	end
-	frame.Position = UDim2.fromOffset(
-		owner.AbsolutePosition.X,
-		owner.AbsolutePosition.Y + owner.AbsoluteSize.Y + 4
-	)
+	local entry = { frame = frame, owner = owner, onClose = onClose }
+	table.insert(self._popups, entry)
+	frame.ZIndex = #self._popups -- позже открытый всегда сверху, независимо от порядка создания
 	frame.Visible = true
-	table.insert(self._popups, { frame = frame, owner = owner, onClose = onClose })
-	task.defer(function()
-		if not frame.Parent then
-			return
-		end
-		local vp = self.Overlay.AbsoluteSize
-		local s = frame.AbsoluteSize
-		local x = math.clamp(frame.AbsolutePosition.X, 4, math.max(4, vp.X - s.X - 4))
-		local y = frame.AbsolutePosition.Y
-		if y + s.Y > vp.Y - 4 then
-			y = math.max(4, owner.AbsolutePosition.Y - s.Y - 4)
-		end
-		frame.Position = UDim2.fromOffset(x, y)
-	end)
+	Place(entry)
+	self:_ensureFollow()
 end
 
 function Library:_togglePopup(frame, owner, onClose)
@@ -447,6 +538,10 @@ function Library:Unload()
 			c:Disconnect()
 		end)
 	end
+	if self._follow then
+		self._follow:Disconnect()
+		self._follow = nil
+	end
 	if self.Gui then
 		self.Gui:Destroy()
 	end
@@ -523,6 +618,7 @@ local function MakePopup(width)
 		Size = UDim2.fromOffset(width, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = T.Background,
+		Active = true, -- клик по пустому месту попапа не должен "проваливаться" на элементы под ним
 		Visible = false,
 		Parent = Library.Overlay,
 	})
@@ -596,9 +692,11 @@ local function BuildColorPicker(right, o, order)
 	Corner(svCursor, 4)
 	Stroke(svCursor, Color3.new(1, 1, 1), 2)
 
-	local hueBar = New("Frame", {
+	local hueBar = New("TextButton", {
 		Size = UDim2.new(1, 0, 0, 10),
 		BackgroundColor3 = Color3.new(1, 1, 1),
+		Text = "",
+		AutoButtonColor = false,
 		LayoutOrder = 2,
 		Parent = pop,
 	})
@@ -617,16 +715,18 @@ local function BuildColorPicker(right, o, order)
 	})
 	local hueCursor = New("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Size = UDim2.fromOffset(4, 14),
+		Size = UDim2.new(0, 4, 1, 4),
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		Parent = hueBar,
 	})
 	Corner(hueCursor, 2)
 	Stroke(hueCursor, Color3.new(0, 0, 0), 1)
 
-	local alphaBar = New("Frame", {
+	local alphaBar = New("TextButton", {
 		Size = UDim2.new(1, 0, 0, 10),
 		BackgroundColor3 = CP.Value,
+		Text = "",
+		AutoButtonColor = false,
 		LayoutOrder = 3,
 		Parent = pop,
 	})
@@ -671,35 +771,35 @@ local function BuildColorPicker(right, o, order)
 
 	sv.InputBegan:Connect(function(input)
 		if IsPress(input) then
-			local function f(pos)
-				local rel = ToScreen(pos) - sv.AbsolutePosition
+			local function f(inp)
+				local rel = PointerPos(inp) - sv.AbsolutePosition
 				s = math.clamp(rel.X / sv.AbsoluteSize.X, 0, 1)
 				v = 1 - math.clamp(rel.Y / sv.AbsoluteSize.Y, 0, 1)
 				apply()
 			end
-			f(input.Position)
+			f(input)
 			BeginDrag(f)
 		end
 	end)
 
 	hueBar.InputBegan:Connect(function(input)
 		if IsPress(input) then
-			local function f(pos)
-				h = math.clamp((ToScreen(pos).X - hueBar.AbsolutePosition.X) / hueBar.AbsoluteSize.X, 0, 1)
+			local function f(inp)
+				h = math.clamp((PointerPos(inp).X - hueBar.AbsolutePosition.X) / hueBar.AbsoluteSize.X, 0, 1)
 				apply()
 			end
-			f(input.Position)
+			f(input)
 			BeginDrag(f)
 		end
 	end)
 
 	alphaBar.InputBegan:Connect(function(input)
 		if IsPress(input) then
-			local function f(pos)
-				a = 1 - math.clamp((ToScreen(pos).X - alphaBar.AbsolutePosition.X) / alphaBar.AbsoluteSize.X, 0, 1)
+			local function f(inp)
+				a = 1 - math.clamp((PointerPos(inp).X - alphaBar.AbsolutePosition.X) / alphaBar.AbsoluteSize.X, 0, 1)
 				apply()
 			end
-			f(input.Position)
+			f(input)
 			BeginDrag(f)
 		end
 	end)
@@ -755,11 +855,13 @@ local function BuildSettings(window, right, order)
 		TextColor3 = T.SubText,
 		Font = T.Font,
 		TextSize = 15,
+		AutoButtonColor = false,
 		LayoutOrder = order or 2,
 		Parent = right,
 	})
+	local gearImage
 	if Library.Icons.Gear then
-		New("ImageLabel", {
+		gearImage = New("ImageLabel", {
 			Size = UDim2.fromScale(1, 1),
 			BackgroundTransparency = 1,
 			Image = Library.Icons.Gear,
@@ -774,10 +876,36 @@ local function BuildSettings(window, right, order)
 
 	S.Gear = gear
 	S.Container = pop
+	-- цвет шестерёнки в покое (Toggle переопределяет: ярче, когда включён)
+	S._idle = function()
+		return T.SubText
+	end
+
+	function S:_paintGear(color)
+		if gearImage then
+			Tween(gearImage, { ImageColor3 = color })
+		else
+			Tween(gear, { TextColor3 = color })
+		end
+	end
+
+	function S:_refreshGear()
+		if not Library:_isOpen(pop) then
+			self:_paintGear(self._idle())
+		end
+	end
+
+	S:_refreshGear()
 	Mixin(S)
 
 	gear.MouseButton1Click:Connect(function()
-		Library:_togglePopup(pop, gear)
+		local wasOpen = Library:_isOpen(pop)
+		Library:_togglePopup(pop, gear, function()
+			S:_paintGear(S._idle())
+		end)
+		if not wasOpen and Library:_isOpen(pop) then
+			S:_paintGear(T.Accent)
+		end
 	end)
 	return S
 end
@@ -788,7 +916,7 @@ end
 
 function Elements:AddToggle(id, o)
 	o = o or {}
-	local Toggle = { Type = "Toggle", Value = false, Window = self.Window, _callback = o.Callback, _hooks = {} }
+	local Toggle = { Type = "Toggle", Value = false, Window = self.Window, _callback = o.Callback, _hooks = {}, _cp = 0 }
 	AttachChanged(Toggle)
 
 	local row = MakeRow(self.Container, 26)
@@ -835,7 +963,8 @@ function Elements:AddToggle(id, o)
 	end
 
 	function Toggle:AddColorPicker(cid, co)
-		local CP = BuildColorPicker(right, co, 1)
+		self._cp += 1
+		local CP = BuildColorPicker(right, co, self._cp) -- несколько пикеров идут слева направо по порядку добавления
 		Register(cid, CP)
 		return CP
 	end
@@ -844,10 +973,13 @@ function Elements:AddToggle(id, o)
 		if self._settings then
 			return self._settings
 		end
-		local S = BuildSettings(self.Window, right, 2)
-		S.Gear.TextColor3 = self.Value and T.Text or T.SubText
-		table.insert(self._hooks, function(val)
-			Tween(S.Gear, { TextColor3 = val and T.Text or T.SubText })
+		local S = BuildSettings(self.Window, right, 5)
+		S._idle = function()
+			return Toggle.Value and T.Text or T.SubText
+		end
+		S:_refreshGear()
+		table.insert(self._hooks, function()
+			S:_refreshGear()
 		end)
 		self._settings = S
 		return S
@@ -966,11 +1098,11 @@ function Elements:AddSlider(id, o)
 
 	hit.InputBegan:Connect(function(input)
 		if IsPress(input) then
-			local function f(pos)
-				local a = math.clamp((ToScreen(pos).X - hit.AbsolutePosition.X) / hit.AbsoluteSize.X, 0, 1)
+			local function f(inp)
+				local a = math.clamp((PointerPos(inp).X - hit.AbsolutePosition.X) / hit.AbsoluteSize.X, 0, 1)
 				S:SetValue(S.Min + (S.Max - S.Min) * a)
 			end
-			f(input.Position)
+			f(input)
 			BeginDrag(f)
 		end
 	end)
@@ -1004,36 +1136,62 @@ function Elements:AddDropdown(id, o)
 		Parent = row,
 	})
 	Corner(btn, 4)
-	Stroke(btn)
+	local btnStroke = Stroke(btn)
 	local btnText = MakeText(btn, "None", {
-		Size = UDim2.new(1, -18, 1, 0),
+		Size = UDim2.new(1, -20, 1, 0),
 		Position = UDim2.fromOffset(6, 0),
 		TextSize = 12,
 		TextColor3 = T.SubText,
 	})
-	MakeText(btn, "v", {
+	local arrow = MakeText(btn, "v", {
 		Size = UDim2.fromOffset(12, 20),
 		Position = UDim2.new(1, -14, 0, 0),
 		TextSize = 11,
 		TextColor3 = T.SubText,
+		TextXAlignment = Enum.TextXAlignment.Center,
 	})
 
+	btn.MouseEnter:Connect(function()
+		Tween(btn, { BackgroundColor3 = T.ElementHover }, 0.1)
+	end)
+	btn.MouseLeave:Connect(function()
+		Tween(btn, { BackgroundColor3 = T.Element }, 0.1)
+	end)
+
+	-- Список: ScrollingFrame -> внутренний Frame с отступами.
+	-- (UIPadding прямо в ScrollingFrame не уменьшает ширину элементов, из-за этого они вылезали вправо.)
 	local pop = New("ScrollingFrame", {
 		Size = UDim2.fromOffset(120, 100),
 		BackgroundColor3 = T.Background,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 2,
+		ScrollBarImageColor3 = T.Stroke,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
 		CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		Active = true,
 		Visible = false,
 		Parent = Library.Overlay,
 	})
 	Corner(pop, 6)
 	Stroke(pop)
-	Pad(pop, 4, 4, 4, 4)
-	List(pop, 2)
+	local inner = New("Frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Parent = pop,
+	})
+	Pad(inner, 4, 4, 4, 4)
+	List(inner, 2)
 
 	local items = {}
+
+	local function isSelected(name)
+		if D.Multi then
+			return D.Value[name] == true
+		end
+		return D.Value == name
+	end
 
 	local function refresh()
 		local text
@@ -1041,26 +1199,40 @@ function Elements:AddDropdown(id, o)
 			local t = {}
 			for _, name in ipairs(D.Values) do
 				if D.Value[name] then
-					table.insert(t, name)
+					table.insert(t, tostring(name))
 				end
 			end
 			text = #t > 0 and table.concat(t, ", ") or "None"
 		else
-			text = D.Value or "None"
+			text = D.Value ~= nil and tostring(D.Value) or "None"
 		end
-		btnText.Text = tostring(text)
+		btnText.Text = text
 		btnText.TextColor3 = (text == "None") and T.SubText or T.Text
-		for name, b in pairs(items) do
-			local sel = D.Multi and D.Value[name] or (not D.Multi and D.Value == name)
-			b.TextColor3 = sel and T.Accent or T.Text
+		for name, item in pairs(items) do
+			local sel = isSelected(name)
+			item.Button.TextColor3 = sel and T.Accent or T.Text
+			item.Mark.Visible = sel
 		end
 	end
 
 	local function build()
-		for _, b in pairs(items) do
-			b:Destroy()
+		for _, c in ipairs(inner:GetChildren()) do
+			if c:IsA("GuiObject") then
+				c:Destroy()
+			end
 		end
 		table.clear(items)
+
+		local n = #D.Values
+		if n == 0 then
+			MakeText(inner, "Пусто", {
+				Size = UDim2.new(1, 0, 0, 20),
+				TextColor3 = T.SubText,
+				TextSize = 12,
+				TextXAlignment = Enum.TextXAlignment.Center,
+			})
+		end
+
 		for i, name in ipairs(D.Values) do
 			local b = New("TextButton", {
 				Size = UDim2.new(1, 0, 0, 20),
@@ -1068,14 +1240,26 @@ function Elements:AddDropdown(id, o)
 				BackgroundTransparency = 1,
 				Text = "  " .. tostring(name),
 				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
 				TextColor3 = T.Text,
 				Font = T.Font,
 				TextSize = 12,
 				AutoButtonColor = false,
 				LayoutOrder = i,
-				Parent = pop,
+				Parent = inner,
 			})
 			Corner(b, 4)
+			Pad(b, 0, 0, 20, 0)
+			local mark = MakeText(b, "✓", {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, 16, 0.5, 0),
+				Size = UDim2.fromOffset(14, 14),
+				TextXAlignment = Enum.TextXAlignment.Center,
+				TextColor3 = T.Accent,
+				TextSize = 11,
+				Font = T.FontBold,
+				Visible = false,
+			})
 			b.MouseEnter:Connect(function()
 				Tween(b, { BackgroundTransparency = 0 }, 0.1)
 			end)
@@ -1084,7 +1268,7 @@ function Elements:AddDropdown(id, o)
 			end)
 			b.MouseButton1Click:Connect(function()
 				if D.Multi then
-					D.Value[name] = not D.Value[name] or nil
+					D.Value[name] = (not D.Value[name]) or nil
 				else
 					D.Value = name
 					Library:_closeFrame(pop)
@@ -1092,9 +1276,11 @@ function Elements:AddDropdown(id, o)
 				refresh()
 				D:_fire()
 			end)
-			items[name] = b
+			items[name] = { Button = b, Mark = mark }
 		end
-		pop.Size = UDim2.fromOffset(120, math.min(#D.Values * 22 + 8, 150))
+
+		local h = n > 0 and (n * 22 + 6) or 30
+		pop.Size = UDim2.fromOffset(pop.Size.X.Offset, math.min(h, 150))
 		refresh()
 	end
 
@@ -1121,10 +1307,19 @@ function Elements:AddDropdown(id, o)
 	end
 
 	function D:SetValues(list)
-		self.Values = list
+		self.Values = list or {}
+		-- сохраняем выбор, если значение всё ещё есть в новом списке
+		local keep = {}
+		for _, v in ipairs(self.Values) do
+			keep[v] = true
+		end
 		if self.Multi then
-			self.Value = {}
-		else
+			for k in pairs(self.Value) do
+				if not keep[k] then
+					self.Value[k] = nil
+				end
+			end
+		elseif self.Value ~= nil and not keep[self.Value] then
 			self.Value = nil
 		end
 		build()
@@ -1132,7 +1327,7 @@ function Elements:AddDropdown(id, o)
 
 	function D:GetSelected()
 		if not self.Multi then
-			return self.Value and { self.Value } or {}
+			return self.Value ~= nil and { self.Value } or {}
 		end
 		local t = {}
 		for _, name in ipairs(self.Values) do
@@ -1143,9 +1338,20 @@ function Elements:AddDropdown(id, o)
 		return t
 	end
 
+	local function resetArrow()
+		arrow.Text = "v"
+		Tween(btnStroke, { Color = T.Stroke }, 0.1)
+	end
+
 	btn.MouseButton1Click:Connect(function()
-		pop.Size = UDim2.fromOffset(btn.AbsoluteSize.X, pop.Size.Y.Offset)
-		Library:_togglePopup(pop, btn)
+		pop.Size = UDim2.fromOffset(math.max(btn.AbsoluteSize.X, 60), pop.Size.Y.Offset)
+		Library:_togglePopup(pop, btn, resetArrow)
+		if Library:_isOpen(pop) then
+			arrow.Text = "^"
+			Tween(btnStroke, { Color = T.Accent }, 0.1)
+		else
+			resetArrow()
+		end
 	end)
 
 	Register(id, D)
@@ -1441,13 +1647,13 @@ function Library:CreateWindow(opts)
 	local main = New("Frame", {
 		Name = "Window",
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), -- ровно центр экрана
 		Size = size,
 		BackgroundColor3 = T.Background,
 		ClipsDescendants = true,
 		Parent = self.Gui,
 	})
-	Corner(main, 10)
+	Corner(main, WINDOW_RADIUS)
 	Stroke(main)
 	Window.Frame = main
 
@@ -1476,12 +1682,20 @@ function Library:CreateWindow(opts)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 0,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
 		CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		Parent = main,
 	})
-	Pad(sidebar, 8, 4, 8, 4)
-	List(sidebar, 2)
+	-- отступы делаем отдельным Frame: UIPadding в ScrollingFrame ненадёжен для ширины элементов
+	local sideList = New("Frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Parent = sidebar,
+	})
+	Pad(sideList, 8, 4, 8, 4)
+	List(sideList, 2)
 
 	local topbar = New("Frame", {
 		Position = UDim2.fromOffset(SIDEBAR, 0),
@@ -1497,7 +1711,9 @@ function Library:CreateWindow(opts)
 		Parent = main,
 	})
 
-	-- Футер
+	-- Футер.
+	-- ClipsDescendants НЕ скругляет обрезку, поэтому прямые углы футера торчали за скруглением окна.
+	-- Футер сам скруглён, а его верх "выпрямлен" плашкой.
 	local footer = New("Frame", {
 		AnchorPoint = Vector2.new(0, 1),
 		Position = UDim2.fromScale(0, 1),
@@ -1506,14 +1722,21 @@ function Library:CreateWindow(opts)
 		BorderSizePixel = 0,
 		Parent = main,
 	})
+	Corner(footer, WINDOW_RADIUS)
+	New("Frame", {
+		Size = UDim2.new(1, 0, 0, WINDOW_RADIUS),
+		BackgroundColor3 = T.Panel,
+		BorderSizePixel = 0,
+		Parent = footer,
+	})
 	MakeText(footer, opts.Footer or "", {
-		Size = UDim2.new(0.6, -12, 1, 0),
-		Position = UDim2.fromOffset(12, 0),
+		Size = UDim2.new(0.6, -14, 1, 0),
+		Position = UDim2.fromOffset(14, 0),
 		TextSize = 11,
 		TextColor3 = T.SubText,
 	})
 	MakeText(footer, opts.FooterRight or "", {
-		Size = UDim2.new(0.4, -12, 1, 0),
+		Size = UDim2.new(0.4, -14, 1, 0),
 		Position = UDim2.new(0.6, 0, 0, 0),
 		TextSize = 11,
 		TextColor3 = T.SubText,
@@ -1521,22 +1744,26 @@ function Library:CreateWindow(opts)
 		RichText = true,
 	})
 
-	-- Перетаскивание
+	-- Перетаскивание: окно нельзя утащить за экран (центр зажимается в пределах видимой области)
 	for _, handle in ipairs({ logo, topbar }) do
 		handle.InputBegan:Connect(function(input)
 			if IsPress(input) then
-				local startPos, startUI = input.Position, main.Position
-				BeginDrag(function(pos)
-					local d = pos - startPos
-					main.Position = UDim2.new(
-						startUI.X.Scale,
-						startUI.X.Offset + d.X,
-						startUI.Y.Scale,
-						startUI.Y.Offset + d.Y
-					)
+				local startPos = PointerPos(input)
+				local startCenter = main.AbsolutePosition + main.AbsoluteSize / 2
+				BeginDrag(function(inp)
+					local d = PointerPos(inp) - startPos
+					local screen = Library.Gui.AbsoluteSize
+					local sz = main.AbsoluteSize
+					local cx = math.clamp(startCenter.X + d.X, 60 - sz.X / 2, screen.X - 60 + sz.X / 2)
+					local cy = math.clamp(startCenter.Y + d.Y, sz.Y / 2, screen.Y - TOPBAR + sz.Y / 2)
+					main.Position = UDim2.fromOffset(cx, cy) -- AnchorPoint 0.5 => это центр окна
 				end)
 			end
 		end)
+	end
+
+	function Window:Center()
+		main.Position = UDim2.fromScale(0.5, 0.5)
 	end
 
 	function Window:Toggle(state)
@@ -1551,6 +1778,7 @@ function Library:CreateWindow(opts)
 	end
 
 	function Window:Destroy()
+		Library:CloseAllPopups()
 		main:Destroy()
 	end
 
@@ -1607,7 +1835,7 @@ function Library:CreateWindow(opts)
 			AutomaticSize = Enum.AutomaticSize.Y,
 			BackgroundColor3 = T.Panel,
 			LayoutOrder = self._order,
-			Parent = sidebar,
+			Parent = sideList,
 		})
 		Corner(frame, 8)
 		Stroke(frame)
@@ -1726,7 +1954,7 @@ function Library:CreateWindow(opts)
 			Page.Category = cat
 		else
 			Window._order += 1
-			parent, order = sidebar, Window._order
+			parent, order = sideList, Window._order
 		end
 
 		local btn = New("TextButton", {
@@ -1847,17 +2075,26 @@ function Library:CreateWindow(opts)
 				BorderSizePixel = 0,
 				ScrollBarThickness = 2,
 				ScrollBarImageColor3 = T.Stroke,
+				ScrollingDirection = Enum.ScrollingDirection.Y,
 				CanvasSize = UDim2.new(),
 				AutomaticCanvasSize = Enum.AutomaticSize.Y,
 				Visible = false,
 				Parent = Page.Content,
 			})
-			Pad(scroll, 8, 4, 8, 8)
-			local holder = New("Frame", {
+			-- ИСПРАВЛЕНИЕ: UIPadding прямо в ScrollingFrame сдвигал контент, но не уменьшал ширину,
+			-- поэтому правая колонка вылезала за край окна. Отступы теперь на обычном Frame.
+			local wrap = New("Frame", {
 				Size = UDim2.new(1, 0, 0, 0),
 				AutomaticSize = Enum.AutomaticSize.Y,
 				BackgroundTransparency = 1,
 				Parent = scroll,
+			})
+			Pad(wrap, 8, 4, 8, 8)
+			local holder = New("Frame", {
+				Size = UDim2.new(1, 0, 0, 0),
+				AutomaticSize = Enum.AutomaticSize.Y,
+				BackgroundTransparency = 1,
+				Parent = wrap,
 			})
 			New("UIListLayout", {
 				FillDirection = Enum.FillDirection.Horizontal,
