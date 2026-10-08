@@ -29,16 +29,16 @@ local Blossom = {
 	Themed = {},
 	Folder = "Blossom",
 	Theme = {
-		Window = Color3.fromRGB(17, 18, 22),
-		Sidebar = Color3.fromRGB(13, 14, 17),
-		Card = Color3.fromRGB(24, 25, 30),
-		Field = Color3.fromRGB(19, 20, 24),
-		Popup = Color3.fromRGB(20, 21, 26),
-		Stroke = Color3.fromRGB(38, 40, 47),
-		Off = Color3.fromRGB(46, 48, 56),
-		Text = Color3.fromRGB(236, 237, 241),
-		SubText = Color3.fromRGB(134, 137, 148),
-		Accent = Color3.fromRGB(56, 128, 247),
+		Window = Color3.fromRGB(30, 30, 33),
+		Sidebar = Color3.fromRGB(23, 23, 26),
+		Card = Color3.fromRGB(38, 38, 42),
+		Field = Color3.fromRGB(27, 27, 30),
+		Popup = Color3.fromRGB(32, 32, 36),
+		Stroke = Color3.fromRGB(56, 56, 62),
+		Off = Color3.fromRGB(62, 62, 68),
+		Text = Color3.fromRGB(232, 232, 236),
+		SubText = Color3.fromRGB(138, 138, 146),
+		Accent = Color3.fromRGB(60, 128, 240),
 	},
 }
 
@@ -636,7 +636,7 @@ function SectionClass:AddToggle(cfg)
 	cfg = cfg or {}
 
 	local name = cfg.Name or "Toggle"
-	local row = self:_Row(name, 24)
+	local row = self:_Row(name, 26)
 
 	local T = setmetatable({
 		Type = "Toggle", Value = cfg.Default == true, Section = self,
@@ -646,30 +646,33 @@ function SectionClass:AddToggle(cfg)
 	local hit = New("TextButton", { Text = "", Size = UDim2.fromScale(1, 1), Parent = row })
 	local label = New("TextLabel", {
 		Text = name, TextXAlignment = Enum.TextXAlignment.Left,
-		Size = UDim2.new(1, -40, 1, 0), Parent = row,
+		Size = UDim2.new(1, -44, 1, 0), Parent = row,
 	})
 
 	T.Addons = New("Frame", {
-		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -38, 0.5, 0),
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -44, 0.5, 0),
 		Size = UDim2.new(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, Parent = row,
 	})
 	List(T.Addons, 6, Enum.FillDirection.Horizontal, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
 
 	local sw = New("TextButton", {
 		Text = "", AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
-		Size = UDim2.fromOffset(30, 16), BackgroundColor3 = Theme.Off, Parent = row,
+		Size = UDim2.fromOffset(34, 18), BackgroundColor3 = Theme.Off, Parent = row,
 	})
-	Corner(sw, 8)
+	Corner(sw, 9)
 
 	local knob = New("Frame", {
 		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 2, 0.5, 0),
-		Size = UDim2.fromOffset(12, 12), BackgroundColor3 = Color3.new(1, 1, 1), Parent = sw,
+		Size = UDim2.fromOffset(14, 14), BackgroundColor3 = Color3.new(1, 1, 1), Parent = sw,
 	})
-	Corner(knob, 6)
+	Corner(knob, 7)
 
 	function T._render()
 		Tween(sw, { BackgroundColor3 = T.Value and Theme.Accent or Theme.Off })
-		Tween(knob, { Position = T.Value and UDim2.new(1, -14, 0.5, 0) or UDim2.new(0, 2, 0.5, 0) })
+		Tween(knob, {
+			Position = T.Value and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
+			BackgroundColor3 = T.Value and Color3.new(1, 1, 1) or Color3.fromRGB(150, 150, 158),
+		})
 		Tween(label, { TextColor3 = T.Value and Theme.Text or Theme.SubText })
 	end
 	Themed(T._render)
@@ -732,38 +735,46 @@ function SectionClass:AddSlider(cfg)
 	local suffix = cfg.Suffix or ""
 
 	local S = { Type = "Slider", Value = math.clamp(cfg.Default or min, min, max) }
-	local row = self:_Row(name, 38)
+	local row = self:_Row(name, 46)
 
 	New("TextLabel", {
 		Text = name, TextXAlignment = Enum.TextXAlignment.Left,
-		Size = UDim2.new(1, -62, 0, 18), Parent = row,
+		Size = UDim2.new(1, -68, 0, 18), Parent = row,
 	})
 
 	local box = New("TextBox", {
 		Text = "", ClearTextOnFocus = false, TextSize = 11, TextColor3 = Theme.SubText,
 		BackgroundColor3 = Theme.Field, AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, 0, 0, 1), Size = UDim2.fromOffset(54, 16), Parent = row,
+		Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(58, 18), Parent = row,
 	})
-	Corner(box, 4)
+	Corner(box, 5)
+	Stroke(box, Theme.Stroke, 0.3)
 
 	local track = New("Frame", {
-		BackgroundColor3 = Theme.Off, Position = UDim2.fromOffset(0, 28),
-		Size = UDim2.new(1, 0, 0, 4), Parent = row,
+		BackgroundColor3 = Theme.Off, Position = UDim2.fromOffset(0, 32),
+		Size = UDim2.new(1, 0, 0, 6), Parent = row,
 	})
-	Corner(track, 2)
+	Corner(track, 3)
 
-	local fill = New("Frame", { BackgroundColor3 = Theme.Accent, Size = UDim2.fromScale(0, 1), Parent = track })
-	Corner(fill, 2)
-	Themed(function() fill.BackgroundColor3 = Theme.Accent end)
+	local fill = New("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(0, 1), Parent = track })
+	Corner(fill, 3)
+	local grad = New("UIGradient", { Parent = fill })
 
 	local knob = New("Frame", {
 		BackgroundColor3 = Color3.new(1, 1, 1), AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(1, 0.5), Size = UDim2.fromOffset(10, 10), Parent = fill,
+		Position = UDim2.fromScale(1, 0.5), Size = UDim2.fromOffset(14, 14), Parent = fill,
 	})
-	Corner(knob, 5)
+	Corner(knob, 7)
+	local glow = Stroke(knob, Theme.Accent, 0.55)
+	glow.Thickness = 3
+
+	Themed(function()
+		grad.Color = ColorSequence.new(Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.3), Theme.Accent)
+		glow.Color = Theme.Accent
+	end)
 
 	local hit = New("TextButton", {
-		Text = "", Position = UDim2.fromOffset(-5, 18), Size = UDim2.new(1, 10, 0, 22), Parent = row,
+		Text = "", Position = UDim2.fromOffset(-7, 24), Size = UDim2.new(1, 14, 0, 22), Parent = row,
 	})
 
 	local function render()
@@ -820,7 +831,7 @@ function SectionClass:AddDropdown(cfg)
 	local selected = {}
 	local itemButtons = {}
 
-	local row = self:_Row(name, 48)
+	local row = self:_Row(name, 52)
 
 	New("TextLabel", {
 		Text = name, TextXAlignment = Enum.TextXAlignment.Left,
@@ -829,9 +840,9 @@ function SectionClass:AddDropdown(cfg)
 
 	local field = New("TextButton", {
 		Text = "", BackgroundColor3 = Theme.Field, Position = UDim2.fromOffset(0, 22),
-		Size = UDim2.new(1, 0, 0, 26), Parent = row,
+		Size = UDim2.new(1, 0, 0, 28), Parent = row,
 	})
-	Corner(field, 5)
+	Corner(field, 6)
 	Stroke(field, Theme.Stroke, 0.3)
 
 	local valueLabel = New("TextLabel", {
@@ -986,7 +997,7 @@ function SectionClass:AddKeybind(cfg)
 	cfg = cfg or {}
 
 	local name = cfg.Name or "Keybind"
-	local row = self:_Row(name, 24)
+	local row = self:_Row(name, 26)
 
 	New("TextLabel", { Text = name, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -60, 1, 0), Parent = row })
 
@@ -1003,7 +1014,7 @@ function SectionClass:AddColorPicker(cfg)
 	cfg = cfg or {}
 
 	local name = cfg.Name or "Color"
-	local row = self:_Row(name, 24)
+	local row = self:_Row(name, 26)
 
 	New("TextLabel", { Text = name, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -40, 1, 0), Parent = row })
 
@@ -1021,14 +1032,14 @@ end
 function SectionClass:AddButton(cfg)
 	cfg = cfg or {}
 
-	local row = self:_Row(cfg.Name, 28)
+	local row = self:_Row(cfg.Name, 30)
 	local b = New("TextButton", {
 		Text = cfg.Name or "Button", BackgroundColor3 = Theme.Field, Size = UDim2.fromScale(1, 1), Parent = row,
 	})
 	Corner(b, 5)
 	Stroke(b, Theme.Stroke, 0.3)
 
-	b.MouseEnter:Connect(function() Tween(b, { BackgroundColor3 = Color3.fromRGB(28, 29, 36) }, 0.1) end)
+	b.MouseEnter:Connect(function() Tween(b, { BackgroundColor3 = Color3.fromRGB(36, 36, 41) }, 0.1) end)
 	b.MouseLeave:Connect(function() Tween(b, { BackgroundColor3 = Theme.Field }, 0.1) end)
 	b.MouseButton1Click:Connect(function()
 		if cfg.Callback then
@@ -1044,7 +1055,7 @@ function SectionClass:AddTextBox(cfg)
 
 	local name = cfg.Name or "TextBox"
 	local X = { Type = "TextBox", Value = cfg.Default or "" }
-	local row = self:_Row(name, 48)
+	local row = self:_Row(name, 52)
 
 	New("TextLabel", { Text = name, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 18), Parent = row })
 
@@ -1052,9 +1063,9 @@ function SectionClass:AddTextBox(cfg)
 		Text = X.Value, PlaceholderText = cfg.Placeholder or "", PlaceholderColor3 = Theme.SubText,
 		ClearTextOnFocus = false, TextColor3 = Theme.SubText, TextXAlignment = Enum.TextXAlignment.Left,
 		BackgroundColor3 = Theme.Field, Position = UDim2.fromOffset(0, 22),
-		Size = UDim2.new(1, 0, 0, 26), Parent = row,
+		Size = UDim2.new(1, 0, 0, 28), Parent = row,
 	})
-	Corner(box, 5)
+	Corner(box, 6)
 	Stroke(box, Theme.Stroke, 0.3)
 	Pad(box, 9, 0, 9, 0)
 
@@ -1140,26 +1151,35 @@ function Blossom:CreateWindow(cfg)
 	W.Gui = Gui
 
 	-- главное окно
-	local size = cfg.Size or (IsMobile and UDim2.fromOffset(560, 330) or UDim2.fromOffset(680, 470))
+	local size = cfg.Size or (IsMobile and UDim2.fromOffset(560, 330) or UDim2.fromOffset(660, 520))
 
 	local Main = New("Frame", {
 		BackgroundColor3 = Theme.Window, AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5), Size = size, Parent = Gui,
 	})
-	Corner(Main, 10)
+	Corner(Main, 12)
 	Stroke(Main, Theme.Stroke, 0.2)
+	New("UIGradient", {
+		Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 205, 210)),
+		Rotation = 90, Parent = Main,
+	})
 	W.Main = Main
 	W.Scale = New("UIScale", { Parent = Main })
 
 	-- боковая панель
-	local Sidebar = New("Frame", { BackgroundColor3 = Theme.Sidebar, Size = UDim2.new(0, 172, 1, 0), Parent = Main })
-	Corner(Sidebar, 10)
+	local Sidebar = New("Frame", { BackgroundColor3 = Theme.Sidebar, Size = UDim2.new(0, 160, 1, 0), Parent = Main })
+	Corner(Sidebar, 12)
 	New("Frame", {
 		BackgroundColor3 = Theme.Sidebar, AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 10, 1, 0), Parent = Sidebar,
+		Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 12, 1, 0), Parent = Sidebar,
 	})
 
-	local Header = New("Frame", { Size = UDim2.new(1, 0, 0, 60), Parent = Sidebar })
+	New("Frame", {
+		BackgroundColor3 = Theme.Stroke, BackgroundTransparency = 0.35, AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 1, 1, 0), Parent = Sidebar,
+	})
+
+	local Header = New("Frame", { Size = UDim2.new(1, 0, 0, 64), Parent = Sidebar })
 
 	local logo
 	if cfg.Logo then
@@ -1181,7 +1201,7 @@ function Blossom:CreateWindow(cfg)
 	title.Font = Enum.Font.GothamBold
 
 	W.TabList = New("ScrollingFrame", {
-		Position = UDim2.fromOffset(0, 60), Size = UDim2.new(1, 0, 1, -106),
+		Position = UDim2.fromOffset(0, 64), Size = UDim2.new(1, 0, 1, -116),
 		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ScrollBarThickness = 0, Parent = Sidebar,
 	})
@@ -1190,21 +1210,21 @@ function Blossom:CreateWindow(cfg)
 
 	-- поиск
 	local SearchBox = New("Frame", {
-		BackgroundColor3 = Theme.Field, Position = UDim2.new(0, 10, 1, -42),
-		Size = UDim2.new(1, -20, 0, 30), Parent = Sidebar,
+		BackgroundColor3 = Theme.Card, Position = UDim2.new(0, 10, 1, -46),
+		Size = UDim2.new(1, -20, 0, 34), Parent = Sidebar,
 	})
-	Corner(SearchBox, 6)
+	Corner(SearchBox, 8)
 	Stroke(SearchBox, Theme.Stroke, 0.4)
 
 	IconLabel({
 		Text = "magnifying-glass", TextSize = 14, TextColor3 = Theme.SubText,
-		Position = UDim2.fromOffset(8, 0), Size = UDim2.fromOffset(16, 30), Parent = SearchBox,
+		Position = UDim2.fromOffset(10, 0), Size = UDim2.fromOffset(16, 34), Parent = SearchBox,
 	})
 
 	W.Search = New("TextBox", {
 		Text = "", PlaceholderText = "Search...", PlaceholderColor3 = Theme.SubText,
 		ClearTextOnFocus = false, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left,
-		Position = UDim2.fromOffset(30, 0), Size = UDim2.new(1, -36, 1, 0), Parent = SearchBox,
+		Position = UDim2.fromOffset(32, 0), Size = UDim2.new(1, -38, 1, 0), Parent = SearchBox,
 	})
 	W.Search:GetPropertyChangedSignal("Text"):Connect(function()
 		W:_ApplySearch()
@@ -1212,9 +1232,9 @@ function Blossom:CreateWindow(cfg)
 
 	-- область страниц
 	W.Content = New("Frame", {
-		Position = UDim2.fromOffset(172, 0), Size = UDim2.new(1, -172, 1, 0), Parent = Main,
+		Position = UDim2.fromOffset(160, 0), Size = UDim2.new(1, -160, 1, 0), Parent = Main,
 	})
-	Pad(W.Content, 10, 10, 6, 10)
+	Pad(W.Content, 14, 14, 8, 14)
 
 	-- слой для выпадающих окон
 	W.Overlay = New("Frame", { Size = UDim2.fromScale(1, 1), ZIndex = 10, Parent = Gui })
@@ -1374,21 +1394,21 @@ function WindowClass:AddTab(cfg)
 	local tab = setmetatable({ Window = self, Name = cfg.Name or "Tab", Sections = {} }, TabClass)
 
 	tab.Button = New("TextButton", {
-		Text = "", BackgroundColor3 = Color3.fromRGB(34, 36, 43), BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 32), LayoutOrder = self._order, Parent = self.TabList,
+		Text = "", BackgroundColor3 = Color3.fromRGB(56, 56, 62), BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 34), LayoutOrder = self._order, Parent = self.TabList,
 	})
-	Corner(tab.Button, 6)
+	Corner(tab.Button, 8)
 
 	if cfg.Icon then
 		tab.Icon = IconLabel({
 			Text = cfg.Icon, TextSize = 16, TextColor3 = Theme.SubText,
-			Position = UDim2.fromOffset(10, 0), Size = UDim2.fromOffset(18, 32), Parent = tab.Button,
+			Position = UDim2.fromOffset(12, 0), Size = UDim2.fromOffset(18, 34), Parent = tab.Button,
 		})
 	end
 
 	tab.Label = New("TextLabel", {
 		Text = tab.Name, TextColor3 = Theme.SubText, TextXAlignment = Enum.TextXAlignment.Left,
-		Position = UDim2.fromOffset(cfg.Icon and 36 or 12, 0), Size = UDim2.new(1, -40, 1, 0), Parent = tab.Button,
+		Position = UDim2.fromOffset(cfg.Icon and 40 or 14, 0), Size = UDim2.new(1, -40, 1, 0), Parent = tab.Button,
 	})
 
 	tab.Page = New("ScrollingFrame", {
@@ -1482,7 +1502,7 @@ function TabClass:AddSection(cfg)
 	end
 
 	New("TextLabel", {
-		Text = cfg.Name or "Section", TextColor3 = Theme.SubText, TextSize = 12,
+		Text = cfg.Name or "Section", TextColor3 = Theme.SubText, TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(x, 0),
 		Size = UDim2.new(1, -x, 1, 0), Parent = head,
 	})
@@ -1491,10 +1511,10 @@ function TabClass:AddSection(cfg)
 		BackgroundColor3 = Theme.Card, Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = holder,
 	})
-	Corner(card, 8)
-	Stroke(card, Theme.Stroke, 0.5)
-	Pad(card, 10, 8, 10, 8)
-	List(card, 6)
+	Corner(card, 10)
+	Stroke(card, Theme.Stroke, 0.35)
+	Pad(card, 12, 10, 12, 10)
+	List(card, 8)
 
 	local sec = setmetatable({
 		Window = self.Window, Tab = self, Holder = holder, Card = card, Items = {}, _order = 0,
